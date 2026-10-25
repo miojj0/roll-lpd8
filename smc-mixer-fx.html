@@ -604,8 +604,8 @@ for (let c = 0; c < 8; c++) {
   [20, 28, 36, 44].forEach((base, r) => { DEFAULT_SMCCC[STRIP_BTNS[c][r]] = 'c' + (base + c) + '@1'; });
 }
 TRANSPORT.forEach(([id], i) => { DEFAULT_SMCCC[id] = 'c' + (52 + i) + '@1'; });
-const PROF_NAME = { smccc: 'SMC Mixer · modo CC', smk37: 'M-Vave SMK37 Pro · modo CC' };
-const PROF_DEF = () => Object.assign({ smccc: DEFAULT_SMCCC }, LAYOUT_MAPS);
+const PROF_NAME = { smccc: 'SMC Mixer · modo CC', smc: 'SMC Mixer · modo DAW', smk37: 'M-Vave SMK37 Pro · modo CC' };
+const PROF_DEF = () => Object.assign({ smccc: DEFAULT_SMCCC, smc: DEFAULT_SMC }, LAYOUT_MAPS);
 
 const st = {
   bpm: 124, anchor: 0, bpmSrc: 'manual', barShift: 0, gridOff: 0, quant: 1,
@@ -628,19 +628,19 @@ const fadGain = (v) => Math.pow(v / 80, 2); // fader em 80 = volume original, 10
 
 /* ---------- armazenamento ---------- */
 function emptyMap() { const m = {}; FNS.forEach((f) => { m[f.id] = null; }); return m; }
-st.maps = { smccc: Object.assign(emptyMap(), DEFAULT_SMCCC) };
+st.maps = { smccc: Object.assign(emptyMap(), DEFAULT_SMCCC), smc: Object.assign(emptyMap(), DEFAULT_SMC) };
 st.map = st.maps.smccc;
 function setProfile(p, manual) {
   if (!st.maps[p]) return;
   if (manual) st.profManual = true;
   st.profile = p; st.map = st.maps[p];
   save();
-  ['ctlProf', 'ctlSel'].forEach((id) => { const sel = document.getElementById(id); if (sel) sel.value = p; });
+  ['ctlProf', 'ctlSel'].forEach((id) => { const sel = document.getElementById(id); if (sel) sel.value = p === 'smc' ? 'smccc' : p; });
 }
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem('smcMixerFx4') || '{}');
-    if (d.maps) { if (d.maps.smccc) st.maps.smccc = Object.assign(emptyMap(), DEFAULT_SMCCC, d.maps.smccc); 
+    if (d.maps) { if (d.maps.smccc) st.maps.smccc = Object.assign(emptyMap(), DEFAULT_SMCCC, d.maps.smccc); if (d.maps.smc) st.maps.smc = Object.assign(emptyMap(), DEFAULT_SMC, d.maps.smc); 
       Object.keys(LAYOUT_MAPS).forEach((p) => { if (d.maps[p] && p !== 'lcxl') st.maps[p] = Object.assign(emptyMap(), LAYOUT_MAPS[p], d.maps[p]); }); }
     if (d.profile && st.maps[d.profile]) { st.profile = d.profile; st.profManual = !!d.profManual; }
     st.map = st.maps[st.profile];
@@ -1754,6 +1754,8 @@ function knobAbs(K, d2) {
   if (ks.last == null) { ks.last = d2; return; }
   let delta = d2 - ks.last;
   if (delta > 64) delta -= 128; else if (delta < -64) delta += 128; // passou do 127 para o 0
+  if (!delta && d2 === 0) delta = -1;        // encoder parado no 0 e ainda girando para a esquerda
+  else if (!delta && d2 === 127) delta = 1;  // parado no 127 e ainda girando para a direita
   ks.last = d2;
   if (!delta) return;
   if (K.id === 'e6' && st.shift) { echoTimeStep(delta); return; }
@@ -2216,6 +2218,13 @@ function onMidi(e) {
     renderLearn(fn, lb(fn) + ' → ' + keyLabel(key) + (freed ? '. ' + lb(freed) + ' ficou sem controle.' : '. Escolha outra função ou toque em Concluir.'));
     return;
   }
+  // a SMC tem dois modos: DAW/Mackie (faders em pitch bend, botões em nota, encoders relativos) e CC. O app reconhece sozinho.
+  if (!st.learning && (st.profile === 'smc' || st.profile === 'smccc') && e.target && /smc|mixer/i.test(e.target.name || '')) {
+    if (st.profile === 'smccc' && (kind === 'pb' || ((kind === 'on' || kind === 'off') && d1 <= 31) || (kind === 'cc' && d1 >= 40 && d1 <= 47 && ch === d1 - 39 && ch > 1))) { setProfile('smc'); lightCache = {}; toast('SMC no modo DAW: mapa Mackie ligado'); }
+    else if (st.profile === 'smc' && kind === 'cc' && ch === 1 && ((d1 >= 24 && d1 <= 39) || (d1 >= 48 && d1 <= 62) || (d1 >= 102 && d1 <= 117))) { setProfile('smccc'); toast('SMC no modo CC: mapa CC ligado'); }
+  }
+  // preset DAW de fábrica: o fader N pode chegar como CC 39+N no canal N (além do pitch bend)
+  if (st.profile === 'smc' && kind === 'cc' && d1 >= 40 && d1 <= 47 && ch === d1 - 39) { faderMidi('f' + ch, d2 / 127 * 100); return; }
   const fn = fnForKey(key);
   if (!fn) return;
   if (FADER_BY[fn]) { if (kind === 'pb') faderMidi(fn, pb14 / 16383 * 100); else if (kind === 'cc') faderMidi(fn, d2 / 127 * 100); return; }
@@ -2628,7 +2637,7 @@ function bind() {
     renderLearn(null, 'Controlador: ' + PROF_NAME[st.profile] + '. Toque numa função e mexa no controle, ou use Mapear tudo em sequência.');
     $('#learnDlg').showModal();
   });
-  const fillProf = (sel) => { sel.innerHTML = ALL_PROFILES.map(([v]) => '<option value="' + v + '"></option>').join(''); ALL_PROFILES.forEach(([v, n], i) => { sel.options[i].textContent = n; }); sel.value = st.profile; };
+  const fillProf = (sel) => { sel.innerHTML = ALL_PROFILES.map(([v]) => '<option value="' + v + '"></option>').join(''); ALL_PROFILES.forEach(([v, n], i) => { sel.options[i].textContent = n; }); sel.value = st.profile === 'smc' ? 'smccc' : st.profile; };
   fillProf($('#ctlProf')); fillProf($('#ctlSel'));
   $('#ctlSel').addEventListener('change', (e) => switchProfile(e.target.value));
   $('#ctlProf').addEventListener('change', (e) => { st.seq = false; st.learning = null; $('#learnSkip').hidden = true; switchProfile(e.target.value); $('#ctlSel').value = st.profile; renderLearn(null, 'Controlador: ' + PROF_NAME[st.profile] + '.'); });
