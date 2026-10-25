@@ -421,7 +421,7 @@ body,button,select,input{font-family:var(--font)}
       <button class="btn" id="liveBtn" type="button">Ativar entrada</button>
       <button class="btn" id="refreshInputs" type="button" title="Atualizar a lista de entradas e saídas">Atualizar</button>
       <button class="btn" id="fileBtn" type="button" title="Tocar uma música salva no aparelho pelos efeitos">Música do aparelho</button>
-      <input type="file" id="trackFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.aif,.aiff,.flac" hidden>
+      <input type="file" id="trackFile" accept=".mp3,.m4a,.aac,.wav,.aif,.aiff,.flac,.caf" hidden>
       <span id="fileCtl" class="filectl" hidden>
         <button class="btn" id="filePlay" type="button">Play</button>
         <input type="range" id="fileSeek" min="0" max="1000" value="0" aria-label="Posição da música">
@@ -482,7 +482,7 @@ body,button,select,input{font-family:var(--font)}
     <div class="grow"></div>
     <button class="btn" id="slotClose">Fechar</button>
   </div>
-  <input type="file" id="slotFile" accept="audio/*" hidden>
+  <input type="file" id="slotFile" accept=".mp3,.m4a,.aac,.wav,.aif,.aiff,.flac,.caf" hidden>
 </dialog>
 
 <dialog id="learnDlg" aria-labelledby="learnTitle">
@@ -2665,7 +2665,8 @@ function bind() {
     btn.textContent = 'Parar varredura';
   });
   document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) toast('Solte em cima de um canal de sample (1 a 3) ou de um pad de baixo'); });
+  // música arrastada para a página (ex.: do app Arquivos no iPad em tela dividida) toca pelos efeitos
+  document.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if (f) loadTrackFile(f); });
   $('#gridTest').addEventListener('click', () => { gridLed(true); setTimeout(() => gridLed(false), 600); toast(midiOuts().length ? 'Piscou os LEDs: ' + GRID_LED[st.gridLed].label : 'Nenhuma saída MIDI da SMC encontrada'); });
   $('#learnSeq').addEventListener('click', () => { st.seq = true; st.seqUsed = new Set(); $('#learnSkip').hidden = false; seqNext(null, ''); });
   $('#learnSkip').addEventListener('click', () => { if (st.seq && st.learning) seqNext(st.learning, 'Pulou. '); });
