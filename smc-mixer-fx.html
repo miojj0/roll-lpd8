@@ -425,6 +425,7 @@ body,button,select,input{font-family:var(--font)}
     <div class="midibar">
       <select id="ctlSel" aria-label="Controladora"></select>
       <span class="stat"><i class="dot" id="midiDot"></i><span id="midiTxt">MIDI desligado</span></span>
+      <select id="kSens" aria-label="Velocidade dos knobs"><option value="0.25">Knobs: lento</option><option value="0.5">Knobs: normal</option><option value="1">Knobs: rápido</option></select>
       <button class="btn" id="mlBtn" aria-pressed="false">MIDI Learn</button>
       <button class="btn" id="learnBtn">Mapear (lista)</button>
       <button class="btn" id="audioBtn">Áudio</button>
@@ -601,7 +602,7 @@ const PROF_DEF = () => Object.assign({ smccc: DEFAULT_SMCCC }, LAYOUT_MAPS);
 const st = {
   bpm: 124, anchor: 0, bpmSrc: 'manual', barShift: 0, gridOff: 0, quant: 1,
   map: null, maps: null, profile: 'smccc', profManual: false, seq: false, seqUsed: null, bpmMin: 115, bpmMax: 135,
-  learning: null, taps: [], heldRolls: [], shift: false, encMode: 'mcu', lastCh: 0, gridLed: 'fader', midiOut: '',
+  learning: null, taps: [], heldRolls: [], shift: false, encMode: 'mcu', kSens: 0.5, lastCh: 0, gridLed: 'fader', midiOut: '',
   vol: [80, 80, 80, 100], pitch: [0, 0, 0, 0],
   rev: { amt: 0, vol: 80, cut: [false, false, false] },
   echo: { amt: 70, vol: 0, q: true, mark: 2, ms: 350, frz: false },
@@ -636,6 +637,7 @@ function load() {
     if (d.profile && st.maps[d.profile]) { st.profile = d.profile; st.profManual = !!d.profManual; }
     st.map = st.maps[st.profile];
     if (d.encMode) st.encMode = d.encMode;
+    if (d.kSens) st.kSens = d.kSens;
     if (d.bpmMin) st.bpmMin = d.bpmMin;
     if (d.bpmMax) st.bpmMax = d.bpmMax;
     if (d.gridLed) st.gridLed = d.gridLed;
@@ -643,7 +645,7 @@ function load() {
   } catch (e) { /* sem armazenamento */ }
 }
 function save() {
-  try { localStorage.setItem('smcMixerFx4', JSON.stringify({ maps: st.maps, profile: st.profile, profManual: st.profManual, encMode: st.encMode, bpmMin: st.bpmMin, bpmMax: st.bpmMax, gridLed: st.gridLed, midiOut: st.midiOut })); } catch (e) { /* ignora */ }
+  try { localStorage.setItem('smcMixerFx4', JSON.stringify({ maps: st.maps, profile: st.profile, profManual: st.profManual, encMode: st.encMode, kSens: st.kSens, bpmMin: st.bpmMin, bpmMax: st.bpmMax, gridLed: st.gridLed, midiOut: st.midiOut })); } catch (e) { /* ignora */ }
 }
 
 /* ---------- utilidades ---------- */
@@ -1699,7 +1701,7 @@ function resetKnob(K) { K.set(K.def); }
 const kacc = {};
 function knobStep(K, delta) {
   if (K.id === 'e6' && st.shift) { echoTimeStep(delta); return; }
-  const step = (K.max - K.min) / 64 * (st.shift ? 0.25 : 1);
+  const step = (K.max - K.min) / 64 * st.kSens * (st.shift ? 0.25 : 1);
   const a = kacc[K.id] || (kacc[K.id] = { v: null, out: null });
   if (a.v == null || K.get() !== a.out) a.v = K.get();
   a.v = clamp(a.v + delta * step, K.min, K.max);
@@ -1720,7 +1722,7 @@ function knobAbs(K, d2) {
   // acumula o giro num valor interno com fração: passos pequenos (pitch, filtros) não se perdem no arredondamento
   // nem na zona morta do centro. Se o valor mudou por outro caminho (tela, reset), recomeça dele.
   if (ks.v == null || K.get() !== ks.out) ks.v = K.get();
-  ks.v = clamp(ks.v + delta * (K.max - K.min) / 127 * (st.shift ? 0.25 : 1), K.min, K.max);
+  ks.v = clamp(ks.v + delta * (K.max - K.min) / 127 * st.kSens * (st.shift ? 0.25 : 1), K.min, K.max);
   K.set(ks.v);
   ks.out = K.get();
 }
@@ -2581,6 +2583,8 @@ function bind() {
   fillProf($('#ctlProf')); fillProf($('#ctlSel'));
   $('#ctlSel').addEventListener('change', (e) => switchProfile(e.target.value));
   $('#ctlProf').addEventListener('change', (e) => { st.seq = false; st.learning = null; $('#learnSkip').hidden = true; switchProfile(e.target.value); $('#ctlSel').value = st.profile; renderLearn(null, 'Controlador: ' + PROF_NAME[st.profile] + '.'); });
+  const ks = $('#kSens'); ks.value = String(st.kSens);
+  ks.addEventListener('change', (e) => { st.kSens = Number(e.target.value) || 0.5; save(); toast({ '0.25': 'Knobs lentos: 4 voltas de ponta a ponta', '0.5': 'Knobs normais: 2 voltas de ponta a ponta', '1': 'Knobs rápidos: 1 volta de ponta a ponta' }[e.target.value]); });
   $('#encMode').addEventListener('change', (e) => { st.encMode = e.target.value; save(); toast({ mcu: 'Encoders no modo Mackie', twos: 'Encoders relativos (complemento de 2)', abs: 'Encoders absolutos (0 a 127)' }[st.encMode]); });
   const gl = $('#gridLed');
   gl.innerHTML = Object.keys(GRID_LED).map((k) => '<option value="' + k + '">Luz do grid: ' + GRID_LED[k].label + '</option>').join('');
