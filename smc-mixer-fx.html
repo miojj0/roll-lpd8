@@ -1,5 +1,6 @@
 <!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}.srtag{font-weight:700;font-size:11px;letter-spacing:1.5px;color:var(--acc);opacity:.9}
 #outSel{max-width:260px}
+.filectl{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.filectl[hidden]{display:none}#fileSeek{width:180px;accent-color:var(--acc)}#fileName{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style></head><body>
 <title>RAVE FX</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -419,6 +420,13 @@ body,button,select,input{font-family:var(--font)}
       <select id="outSel" aria-label="Saída: vai para o RETURN do mixer"><option value="">Saída padrão do sistema</option></select>
       <button class="btn" id="liveBtn" type="button">Ativar entrada</button>
       <button class="btn" id="refreshInputs" type="button" title="Atualizar a lista de entradas e saídas">Atualizar</button>
+      <button class="btn" id="fileBtn" type="button" title="Tocar uma música salva no aparelho pelos efeitos">Música do aparelho</button>
+      <input type="file" id="trackFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.aif,.aiff,.flac" hidden>
+      <span id="fileCtl" class="filectl" hidden>
+        <button class="btn" id="filePlay" type="button">Play</button>
+        <input type="range" id="fileSeek" min="0" max="1000" value="0" aria-label="Posição da música">
+        <span class="small mute" id="fileName"></span>
+      </span>
       <span class="small mute" id="liveTxt">SEND do mixer na entrada, RETURN na saída, e ative</span>
     </div>
     <div class="grow"></div>
@@ -1385,7 +1393,8 @@ function stopLiveBpm() {
   live.node = null; live.hnode = null; live.filt = []; live.env = []; live.henv = [];
 }
 function liveBpmTick() {
-  if (!ctx || !(audioMode === 'pc' ? pcSrc : liveSrc)) return;
+  if (!ctx || !(audioMode === 'pc' ? pcSrc : (liveSrc || fileOn))) return;
+  if (fileOn && fileEl && fileEl.paused) { liveMsg('música do aparelho · pausada'); return; }
   if (live.levelDb <= -72) { liveMsg(audioMode === 'pc' ? 'sem áudio do sistema — marque Compartilhar áudio do sistema no Chrome' : 'sem sinal — Rekordbox em CABLE Input e app em CABLE Output'); return; }
   if (!live.env.length) { liveMsg('entrada ativa · sinal chegando, aguardando kick'); return; }
   const y = Float32Array.from(live.env);
@@ -1498,9 +1507,38 @@ async function listInputs() {
     out.value = Array.from(out.options).some((o) => o.value === keep) ? keep : '';
   } catch (e) { liveMsg('Não consegui listar entradas de áudio; confira a permissão do Chrome'); }
 }
+let fileEl = null, fileSrc = null, fileUrl = null, fileOn = false;
+function loadTrackFile(f) {
+  if (!f) return;
+  if (!ctx) { toast('Toque na tela para liberar o áudio e escolha de novo'); return; }
+  stopLive();
+  if (!fileEl) {
+    fileEl = new Audio(); fileEl.preload = 'auto'; fileEl.setAttribute('playsinline', '');
+    fileSrc = ctx.createMediaElementSource(fileEl); fileSrc.connect(musicBus);
+    fileEl.addEventListener('timeupdate', () => { if (fileEl.duration) $('#fileSeek').value = Math.round(fileEl.currentTime / fileEl.duration * 1000); });
+    fileEl.addEventListener('play', () => { $('#filePlay').textContent = 'Pause'; });
+    fileEl.addEventListener('pause', () => { $('#filePlay').textContent = 'Play'; });
+    fileEl.addEventListener('error', () => toast('Não consegui abrir essa música'));
+  }
+  if (fileUrl) URL.revokeObjectURL(fileUrl);
+  fileUrl = URL.createObjectURL(f); fileEl.src = fileUrl;
+  $('#fileName').textContent = f.name.replace(/\.[^.]+$/, ''); $('#fileName').title = f.name;
+  $('#fileCtl').hidden = false;
+  fileOn = true;
+  if (st.bpmSrc !== 'auto') setBpm(st.bpm, 'auto');
+  startLiveBpm(fileSrc);
+  liveMsg('música do aparelho · ouvindo o BPM...');
+  (ctx.state === 'suspended' ? ctx.resume() : Promise.resolve()).then(() => fileEl.play()).catch(() => toast('Toque em Play'));
+}
+function stopFile() {
+  if (!fileOn) return;
+  fileOn = false;
+  if (fileEl) fileEl.pause();
+  stopLiveBpm();
+}
 async function startLive() {
   if (!ctx) return;
-  stopLive(); stopPc();
+  stopLive(); stopPc(); stopFile();
   const id = $('#inSel').value;
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -2544,6 +2582,17 @@ function bind() {
   const inSel = $('#inSel');
   inSel.addEventListener('change', () => { if (liveStream && inSel.value) startLive(); else if (!inSel.value) stopLive(); else liveMsg('Entrada selecionada; pressione Ativar entrada'); renderPads(); });
   $('#refreshInputs').addEventListener('click', () => listInputs());
+  $('#fileBtn').addEventListener('click', () => $('#trackFile').click());
+  $('#trackFile').addEventListener('change', (e) => { const f = e.target.files && e.target.files[0]; loadTrackFile(f); e.target.value = ''; });
+  $('#filePlay').addEventListener('click', () => {
+    if (!fileEl) return;
+    if (fileEl.paused) {
+      if (!fileOn) { stopLive(); fileOn = true; startLiveBpm(fileSrc); }
+      if (ctx && ctx.state === 'suspended') ctx.resume();
+      fileEl.play().catch(() => toast('Não consegui tocar a música'));
+    } else fileEl.pause();
+  });
+  $('#fileSeek').addEventListener('input', (e) => { if (fileEl && fileEl.duration) fileEl.currentTime = e.target.value / 1000 * fileEl.duration; });
   $('#liveBtn').addEventListener('click', () => { if (liveStream) stopLive(); else startLive(); });
   if ($('#pcBtn')) $('#pcBtn').addEventListener('click', () => { if (pcStream) { stopPc(); liveMsg('Captura do PC parada'); } else startPc(); });
   if ($('#audioSourceSel')) $('#audioSourceSel').addEventListener('change', (e) => {
