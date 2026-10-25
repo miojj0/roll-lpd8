@@ -1749,20 +1749,42 @@ function knobStep(K, delta) {
 // encoder de 360° que manda posição (preset CC): o app anda a partir de onde o valor ESTÁ, só com a diferença
 // do giro. Não precisa buscar a posição e nunca salta, mesmo depois de um reset.
 const kstate = {};
+// a SMC pode mandar o encoder de dois jeitos, conforme o preset e a conexão (USB ou Bluetooth):
+// posição absoluta (0 a 127) ou giro relativo (1 = direita, 127 = esquerda; ou 65 / 63). O app descobre sozinho
+// nos primeiros movimentos: relativo repete o mesmo número enquanto gira, absoluto vai somando.
+let encKind = null; // null = descobrindo · 'abs' · 'twos' (1 / 127) · 'off' (65 / 63)
+const relTwos = (v) => (v >= 1 && v <= 15) || (v >= 113 && v <= 127);
+const relOff = (v) => v >= 49 && v <= 79 && v !== 64;
 function knobAbs(K, d2) {
-  const ks = kstate[K.id] || (kstate[K.id] = { last: null });
-  if (ks.last == null) { ks.last = d2; return; }
-  let delta = d2 - ks.last;
-  if (delta > 64) delta -= 128; else if (delta < -64) delta += 128; // passou do 127 para o 0
-  if (!delta && d2 === 0) delta = -1;        // encoder parado no 0 e ainda girando para a esquerda
-  else if (!delta && d2 === 127) delta = 1;  // parado no 127 e ainda girando para a direita
-  ks.last = d2;
+  const ks = kstate[K.id] || (kstate[K.id] = { last: null, n: 0, tw: 0, lo: false, hi: false, up: 0 });
+  const prev = ks.last; ks.last = d2; ks.n++;
+  if (!encKind) {
+    if (relTwos(d2)) ks.tw++;
+    if (d2 < 64) ks.lo = true; if (d2 > 64) ks.hi = true;
+    if (prev != null && d2 === prev && d2 !== 0 && !(d2 === 127 && ks.up > 0)) encKind = relTwos(d2) ? 'twos' : relOff(d2) ? 'off' : null;
+    else if (ks.n >= 5 && ks.lo && ks.hi && ks.tw === ks.n) encKind = 'twos';
+    else if (ks.n >= 6 && ks.tw < ks.n && !(prev != null && Math.abs(d2 - 64) <= 15 && Math.abs(prev - 64) <= 15)) encKind = 'abs';
+    if (encKind === 'twos' || encKind === 'off') { Object.keys(kstate).forEach((k) => { kstate[k].v = null; }); toast('Encoders da SMC: modo relativo reconhecido'); }
+  }
+  let delta, unit;
+  if (encKind === 'twos' || encKind === 'off') {
+    delta = encKind === 'twos' ? (d2 < 64 ? d2 : d2 - 128) : d2 - 64;
+    unit = (K.max - K.min) / 32;
+  } else {
+    if (prev == null) return;
+    delta = d2 - prev;
+    if (delta > 64) delta -= 128; else if (delta < -64) delta += 128; // passou do 127 para o 0
+    if (!delta && d2 === 0) delta = -1;                  // parado no 0 e ainda girando para a esquerda
+    else if (!delta && d2 === 127 && ks.up > 0) delta = 1; // parado no 127 e ainda girando para a direita
+    unit = (K.max - K.min) / 127;
+  }
+  if (delta) ks.up = Math.sign(delta);
   if (!delta) return;
   if (K.id === 'e6' && st.shift) { echoTimeStep(delta); return; }
   // acumula o giro num valor interno com fração: passos pequenos (pitch, filtros) não se perdem no arredondamento
   // nem na zona morta do centro. Se o valor mudou por outro caminho (tela, reset), recomeça dele.
   if (ks.v == null || K.get() !== ks.out) ks.v = K.get();
-  ks.v = clamp(ks.v + delta * (K.max - K.min) / 127 * st.kSens * (st.shift ? 0.25 : 1), K.min, K.max);
+  ks.v = clamp(ks.v + delta * unit * st.kSens * (st.shift ? 0.25 : 1), K.min, K.max);
   K.set(ks.v);
   ks.out = K.get();
 }
@@ -2204,7 +2226,7 @@ function onMidi(e) {
   const pb14 = kind === 'pb' ? (d1 | (d2 << 7)) : 0;
   const lm = $('#lastMidi'); if (lm) lm.textContent = 'último: ' + keyLabel(key) + (kind === 'pb' ? ' · ' + pb14 : kind !== 'off' ? ' · ' + d2 : ' · solto');
   const mon = $('#midiMon');
-  if (mon && kind !== 'off') { const f0 = fnForKey(key), lab = f0 ? FNS.find((f) => f.id === f0).label : 'sem função neste mapa'; mon.textContent = keyLabel(key) + ' → ' + lab; }
+  if (mon && kind !== 'off') { const f0 = fnForKey(key), lab = f0 ? FNS.find((f) => f.id === f0).label : 'sem função neste mapa'; mon.textContent = keyLabel(key) + ' = ' + (kind === 'pb' ? pb14 : d2) + ' → ' + lab; }
   if (st.learning) {
     if (kind === 'off') return;
     if (st.seq && st.seqUsed.has(key)) return;
