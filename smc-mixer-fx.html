@@ -2142,10 +2142,14 @@ function hookMidi() {
   $('#midiTxt').title = names.join(', ');
   lightCache = {}; setTimeout(updateButtons, 300);
 }
+let midiAsking = false;
 async function initMidi() {
-  if (!navigator.requestMIDIAccess) { $('#midiTxt').textContent = 'MIDI indisponível neste navegador (use o Chrome)'; return; }
-  try { midi = await navigator.requestMIDIAccess(); midi.onstatechange = hookMidi; hookMidi(); }
-  catch (e) { $('#midiTxt').textContent = 'MIDI bloqueado'; }
+  if (midi || midiAsking) return;
+  if (!navigator.requestMIDIAccess) { $('#midiTxt').textContent = 'MIDI indisponível neste navegador (no iPhone use o MIDIWeb Browser)'; return; }
+  midiAsking = true;
+  try { midi = await navigator.requestMIDIAccess(); midi.onstatechange = hookMidi; hookMidi(); setTimeout(hookMidi, 1500); }
+  catch (e) { $('#midiTxt').textContent = 'MIDI bloqueado · toque na tela para tentar de novo'; }
+  midiAsking = false;
 }
 function onMidi(e) {
   const d = e.data, s = d[0] & 0xF0, ch = (d[0] & 0x0F) + 1, d1 = d[1], d2 = d.length > 2 ? d[2] : 0;
@@ -2508,9 +2512,10 @@ function bind() {
     try { await initAudio(); } catch (e) { toast('Erro ao iniciar o áudio: ' + (e && (e.name + ': ' + e.message))); return; }
     renderPads();
     listInputs();
+    initMidi();
     if (ctx.state !== 'running') toast('Clique em qualquer lugar para liberar o som');
   })();
-  const unlock = () => { if (ctx && ctx.state !== 'running') ctx.resume(); };
+  const unlock = () => { if (ctx && ctx.state !== 'running') ctx.resume(); if (!midi && !midiAsking) initMidi(); };
   ['pointerdown', 'keydown', 'touchstart'].forEach((t) => document.addEventListener(t, unlock, true));
   $('#bpmIn').addEventListener('change', (e) => setBpm(e.target.value, 'manual'));
   // TAP, Grid − e Grid + aceitam MIDI Learn: com o learn ligado, o clique escolhe a função em vez de executar
